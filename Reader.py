@@ -3,6 +3,7 @@ import pandas as pd
 import scipy.io as sio
 
 from cmlreaders import CMLReader, get_data_index
+from th_eventreader import TH_EventReader
 
 from ptsa.data.filters import ButterworthFilter
 from ptsa.data.filters import MorletWaveletFilter
@@ -13,6 +14,41 @@ from ptsa.data.timeseries import TimeSeries
 def subject_id(subject, montage):
     return (subject if montage == 0
                 else f"{subject}_{int(montage)}")
+
+
+def get_base_and_move_starts(path):
+    """ Given path data of 1 event, determine the start of
+        the baseline and the start of the navigation, based
+        on the first timepoint and the first movement timepoint
+        in the path data, respectively.
+        
+        Args:
+            path (list): list of path datapoints each containing
+                ['mstime', 'x', 'y', 'heading']
+        
+        Returns:
+            base_start (int): start of the baseline data, in mstime.
+            move_start (int): start of the navigation epoch, in msitme.
+    """
+    xs = [p['x'] for p in path]
+    ys = [p['y'] for p in path]
+    dirs = [p['heading'] for p in path]
+    ts = [p['mstime'] for p in path]
+    
+    base_start = ts[0]
+
+    move_start = ts[-1]
+    for i, (x,y,d,t) in enumerate(zip(xs, ys, dirs, ts)):
+        if ((i>0) and
+            ((x!=xs[i-1])
+             or (y!=ys[i-1])
+             or (d!=dirs[i-1])
+                )):
+            move_start = t
+            break
+    
+    
+    return base_start, move_start
 
 
 def get_all_events(**subject_dict):
@@ -28,13 +64,15 @@ def get_all_events(**subject_dict):
     all_events = []
     try:
         for session in sessions:
-            reader = CMLReader(**subject_dict, session=session)
-            all_events.append(reader.load('events'))
+            all_events.append(TH_EventReader.get_events(
+                subj=subject_dict['subject'], montage=subject_dict['montage'],
+                session=session, exp=subject_dict['experiment']))
             
     except FileNotFoundError:
         for session in original_sessions:
-            reader = CMLReader(**subject_dict, session=session)
-            all_events.append(reader.load('events'))
+            all_events.append(TH_EventReader.get_events(
+                subj=subject_dict['subject'], montage=subject_dict['montage'],
+                session=session, exp=subject_dict['experiment']))
             
     all_events = pd.concat(all_events)
     all_events.index = range(len(all_events))
@@ -42,12 +80,25 @@ def get_all_events(**subject_dict):
     all_events = all_events[all_events['eegfile']!= '']
     
     if len(all_events['eegfile'].unique())>len(all_events['session'].unique()):
+        # sometimes the eegfile splits in the middle of a session. This makes it
+        # difficult to get data from the start of the first event with the new 
+        # eegfile since part of the data will be at the end of the previous eegfile.
+        # the best way to deal with it is to remove those events.
         bad_events = []
         for iloc, (i, row) in enumerate(all_events[['eegfile', 'session']].iterrows()):
             if row['eegfile'] != all_events.iloc[iloc-1]['eegfile']:
                 if row['session'] == all_events.iloc[iloc-1]['session']:
                     bad_events.append(i)
         all_events = all_events[~all_events.index.isin(bad_events)]
+       
+    base_starts = []
+    move_starts = []
+    for i, event in all_events.iterrows():
+        base_start, move_start = get_base_and_move_starts(event['pathInfo'])
+        base_starts.append(base_start)
+        move_starts.append(move_start)
+    all_events['base_start'] = base_starts
+    all_events['move_start'] = move_starts
     
     return all_events
 
@@ -125,7 +176,7 @@ def make_events_first_dim(ts, event_dim_str='event'):
     return ts
 
 
-def load_eeg(events, contacts, 
+def load_eeg(events, which_contacts, 
              rel_start_ms, rel_stop_ms, buf_ms,
              noise_freq=[58., 62.], resample_freq=None,
              pass_band=None, do_average_ref=True,
@@ -149,7 +200,7 @@ def load_eeg(events, contacts,
             loaded=True
         except KeyError as ke:
             bad_contact = int(str(ke).replace("'", ''))
-            if bad_contact in contacts:
+            if bad_contact in which_contacts:
                 raise ke
             elec_scheme = elec_scheme[elec_scheme['contact'] != bad_contact]
     
@@ -160,12 +211,13 @@ def load_eeg(events, contacts,
         # compute average reference by subracting the mean across channels
         eeg = eeg - eeg.mean(dim='channel')
     
-    
+    # reorder dims
     eeg = make_events_first_dim(eeg)
+    
     # filter channels to only desired contacts
     contact_locs = [elec_scheme[elec_scheme['contact']==c].iloc[0].name
-                    for c in contacts]
-    eeg = eeg[:,  contact_locs, :]
+                    for c in which_contacts]
+    eeg = eeg[:,  which_contacts, :]
         
     # filter line noise
     if noise_freq is not None:

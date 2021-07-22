@@ -34,7 +34,7 @@ def compute_hilbert(eeg):
     return hilbert_pow
 
 
-def compute_wavelet(eeg, freqs, wave_num=6,
+def compute_wavelet(eeg, freqs, wave_num=5,
                     output='power', log_power=True,
                     mean_over_freqs=False,
                    ):
@@ -122,15 +122,15 @@ def compute_power(eeg, freq_band, buf_ms,
     return powers
 
 
-def get_basepow(events, freq_band, which_contacts, total_time,
-                subject_dict, eeg_kwargs, pow_kwargs, wave_kwargs):
+def get_basepow(events, freq_band, which_contacts, buf_ms,
+                subject_dict, eeg_kwargs={}, pow_kwargs={}, wave_kwargs={}):
     """ Get pre-trial baseline powers.
     
         Args:
             events (pd.DataFrame)
             freq_band (list): two floats.
             which_contacts (list of ints)
-            total_time (int)
+            buf_ms (int or float)
             subject_dict (dict):
                 ['subject', 'montage', 'experiment', 'localization']
             eeg_kwargs (dict):
@@ -142,36 +142,58 @@ def get_basepow(events, freq_band, which_contacts, total_time,
             
     """
     
-    basepow = pd.DataFrame({'mu': [[] for i in range(len(events))],
-                            'std': [[] for i in range(len(events))]},
-                           index=events.index)
+    sessions = events['session'].drop_duplicates()
     
-    for i, (session, trial) in events[['session', 'trial']].drop_duplicates().iterrows():
+    besepow_mu = [[] for sess in sessions]
+    basepow_std = [[] for sess in sessions]
     
-        pre_trial_eeg = Reader.load_eeg(
-            events.loc[i:i], which_contacts=which_contacts,
-            rel_start_ms=-total_time, rel_stop_ms=-2000,
-            buf_ms=0, do_average_ref=False,
-            **subject_dict, **eeg_kwargs,
-        )
-        pre_trial_power = compute_power(
-            pre_trial_eeg, freq_band, buf_ms=0,
-            **pow_kwargs, **wave_kwargs
+    for i, (s, session) in enumerate(sessions.iteritems()):
+    
+        sess_trials = events[
+            events['session']==session]['trial'].drop_duplicates()
+        for e, trial in sess_trials.iteritems():
+            # ^ this will give e as the index of the first event from each trial
+            event = events.loc[e]
             
-        ).mean(dim='event')
+            # determine baseline starts and stops
+            rel_start_ms = event['base_start'] - event['mstime']
+            rel_stop_ms = event['move_start'] - event['base_start']
+            
+            # load baseline eeg and power
+            pre_trial_eeg = Reader.load_eeg(
+                events.loc[e:e], which_contacts=which_contacts,
+                rel_start_ms=rel_start_ms, rel_stop_ms=rel_stop_ms,
+                buf_ms=buf_ms, do_average_ref=False,
+                **subject_dict, **eeg_kwargs,
+            )
+            pre_trial_power = compute_power(
+                pre_trial_eeg, freq_band, buf_ms=buf_ms,
+                **pow_kwargs, **wave_kwargs
 
-        locs = (events['session']==session)&(events['trial']==trial)
-        basepow['mu'][locs] = [pre_trial_power.mean().values]
-        basepow['std'][locs] = [pre_trial_power.std().values]
-
-    return basepow
-
-
-def zscore_powers(eeg_pow, basepow):
+            )
+            
+            # get mean and std for each channel
+            basepow_mu[i].append(pre_trial_power.mean(dim=['event', 'time']))
+            basepow_std[i].append(pre_trial_power.std(dim=['event', 'time']))
     
-    for event in eeg_pow.event:
-        event_index = event.values[()]['index']
-        eeg_pow[eeg_pow['event']==event] -= basepow['mu'].loc[event_index]
-        eeg_pow[eeg_pow['event']==event] /= basepow['std'].loc[event_index]
+    # convert to xarrays
+    basepow = xr.DataArray([basepow_mu, basepow_std],
+                           coords=[['mu', 'std'], sessions, pre_trial_power.channel],
+                           dims=['zstat', 'session', 'channel'])
 
-    return eeg_pow
+    return basebasepowpow
+
+
+def zscore_powers(powers, basepow):
+    
+    powers = powers.copy() # dont want to change anything in place
+    
+    # z score each session based on its own baseline
+    sessions = powers.event.values['session'].unique()
+    for session in sessions:
+        sess_locs = powers.event.values['session']==sessions
+        # zscore will work accross channels, for all events in this session
+        powers[sess_locs] -= basepow['mu', session]
+        powers[sess_locs] /= basepow['std', session]
+
+    return powers
