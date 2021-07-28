@@ -160,10 +160,11 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
 
             # load baseline eeg and power
             pre_trial_eeg = Reader.load_eeg(
+                subject_dict,
                 events.loc[e:e], which_contacts=which_contacts,
                 rel_start_ms=rel_start_ms, rel_stop_ms=rel_stop_ms,
                 buf_ms=buf_ms, do_average_ref=False,
-                **subject_dict, **kwargs
+                 **kwargs
             )
             pre_trial_power = compute_power(
                 pre_trial_eeg, freq_band, buf_ms=buf_ms,
