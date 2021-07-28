@@ -133,7 +133,9 @@ def load_contacts(load_type='contacts', **subject_dict):
     contacts = reader.load(load_type)
     
     matlab_contacts = load_matlab_contacts(
-        subject_dict['subject'], subject_dict['montage'])
+        subject_dict['subject'], subject_dict['montage'],
+        load_type=load_type,
+    )
     for i in range(1,6):
         contacts[f'Loc{i}'] = matlab_contacts[f'Loc{i}']
     
@@ -176,17 +178,20 @@ def make_events_first_dim(ts, event_dim_str='event'):
     return ts
 
 
-def load_eeg(events, which_contacts, 
+def load_eeg(subject_dict, events, which_contacts, 
              rel_start_ms, rel_stop_ms, buf_ms,
              noise_freq=[58., 62.], resample_freq=None,
-             pass_band=None, do_average_ref=True,
-             **subject_dict,
+             pass_band=None, do_average_ref=False,
+             **kwargs,
             ):
     
     if buf_ms is not None:
         start = rel_start_ms - buf_ms
         stop = rel_stop_ms + buf_ms
     
+    for key in kwargs:
+        if key != 'load_type':
+            kwargs.pop(key)
     reader = CMLReader(**subject_dict)
     elec_scheme = load_contacts(**subject_dict)
     
