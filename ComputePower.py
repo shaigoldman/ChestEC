@@ -70,9 +70,9 @@ def get_time_bins(window_size, window_step, start, end):
 
 def compute_power(eeg, freq_band, buf_ms,
                   window_size=None, window_step=100,
-                  transform='hilbert',
-                  **wave_kwargs):
-    
+                  transform='wavelet',
+                  **kwargs):
+
     if transform == 'hilbert':
         filt_eeg = ButterworthFilter(
             eeg, freq_band, filt_type='pass', order=4
@@ -80,13 +80,12 @@ def compute_power(eeg, freq_band, buf_ms,
         powers = compute_hilbert(filt_eeg)
         
     elif transform == 'wavelet':
-        
-        num_freqs = int(freq_band[1]-freq_band[0]) * 2
+        num_freqs = int(freq_band[1]-freq_band[0]) * 5
         
         freqs = np.geomspace(*freq_band, num_freqs)
         powers = compute_wavelet(
             eeg, freqs, mean_over_freqs=True,
-            **wave_kwargs
+            **kwargs
         )
 
     else:
@@ -94,7 +93,6 @@ def compute_power(eeg, freq_band, buf_ms,
     
     if buf_ms:
         powers = powers.remove_buffer(buf_ms/1000.)
-
     # take the mean of each time bin, if given
     # create a new timeseries for each bin and the
     # concat and add in new time dimension. This code
@@ -123,7 +121,7 @@ def compute_power(eeg, freq_band, buf_ms,
 
 
 def get_basepow(events, freq_band, which_contacts, buf_ms,
-                subject_dict, eeg_kwargs={}, pow_kwargs={}, wave_kwargs={}):
+                subject_dict, **kwargs):
     """ Get pre-trial baseline powers.
     
         Args:
@@ -162,15 +160,15 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
 
             # load baseline eeg and power
             pre_trial_eeg = Reader.load_eeg(
+                subject_dict,
                 events.loc[e:e], which_contacts=which_contacts,
                 rel_start_ms=rel_start_ms, rel_stop_ms=rel_stop_ms,
-                buf_ms=buf_ms, do_average_ref=True,
-                **subject_dict, **eeg_kwargs,
+                buf_ms=buf_ms, do_average_ref=False,
+                 **kwargs
             )
             pre_trial_power = compute_power(
                 pre_trial_eeg, freq_band, buf_ms=buf_ms,
-                **pow_kwargs, **wave_kwargs
-
+                **kwargs
             )
 
             # get mean and std for each channel

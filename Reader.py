@@ -90,7 +90,6 @@ def get_all_events(**subject_dict):
                 if row['session'] == all_events.iloc[iloc-1]['session']:
                     bad_events.append(i)
         all_events = all_events[~all_events.index.isin(bad_events)]
-
     move_starts = []
     move_ends = []
     for i, event in all_events.iterrows():
