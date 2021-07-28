@@ -90,7 +90,6 @@ def get_all_events(**subject_dict):
                 if row['session'] == all_events.iloc[iloc-1]['session']:
                     bad_events.append(i)
         all_events = all_events[~all_events.index.isin(bad_events)]
-        
     move_starts = []
     move_ends = []
     for i, event in all_events.iterrows():
@@ -176,7 +175,7 @@ def make_events_first_dim(ts, event_dim_str='event'):
     return ts
 
 
-def load_eeg(events, contacts, 
+def load_eeg(events, which_contacts, 
              rel_start_ms, rel_stop_ms, buf_ms,
              noise_freq=[58., 62.], resample_freq=None,
              pass_band=None, do_average_ref=True,
@@ -200,7 +199,7 @@ def load_eeg(events, contacts,
             loaded=True
         except KeyError as ke:
             bad_contact = int(str(ke).replace("'", ''))
-            if bad_contact in contacts:
+            if bad_contact in which_contacts:
                 raise ke
             elec_scheme = elec_scheme[elec_scheme['contact'] != bad_contact]
     
@@ -216,7 +215,7 @@ def load_eeg(events, contacts,
     
     # filter channels to only desired contacts
     contact_locs = [elec_scheme[elec_scheme['contact']==c].iloc[0].name
-                    for c in contacts]
+                    for c in which_contacts]
     eeg = eeg[:,  contact_locs, :]
         
     # filter line noise
