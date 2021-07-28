@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import xarray as xr
 import numexpr
 import bottleneck as bn
 
@@ -34,7 +35,7 @@ def compute_hilbert(eeg):
     return hilbert_pow
 
 
-def compute_wavelet(eeg, freqs, wave_num=5,
+def compute_wavelet(eeg, freqs, wave_num=6,
                     output='power', log_power=True,
                     mean_over_freqs=False,
                    ):
@@ -93,7 +94,6 @@ def compute_power(eeg, freq_band, buf_ms,
     
     if buf_ms:
         powers = powers.remove_buffer(buf_ms/1000.)
-    
 
     # take the mean of each time bin, if given
     # create a new timeseries for each bin and the
@@ -141,29 +141,30 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
                 [wave_num=6, log_power=True]
             
     """
+    besepow_mu = []
+    basepow_std = []
     
     sessions = events['session'].drop_duplicates()
-    
-    besepow_mu = [[] for sess in sessions]
-    basepow_std = [[] for sess in sessions]
-    
     for i, (s, session) in enumerate(sessions.iteritems()):
-    
+
+        sess_mu = []
+        sess_std = []
+
         sess_trials = events[
             events['session']==session]['trial'].drop_duplicates()
         for e, trial in sess_trials.iteritems():
             # ^ this will give e as the index of the first event from each trial
             event = events.loc[e]
-            
+
             # determine baseline starts and stops
-            rel_start_ms = event['base_start'] - event['mstime']
-            rel_stop_ms = event['move_start'] - event['base_start']
-            
+            rel_start_ms = event['baseline_start'] - event['mstime']
+            rel_stop_ms = event['baseline_end'] - event['mstime']
+
             # load baseline eeg and power
             pre_trial_eeg = Reader.load_eeg(
                 events.loc[e:e], which_contacts=which_contacts,
                 rel_start_ms=rel_start_ms, rel_stop_ms=rel_stop_ms,
-                buf_ms=buf_ms, do_average_ref=False,
+                buf_ms=buf_ms, do_average_ref=True,
                 **subject_dict, **eeg_kwargs,
             )
             pre_trial_power = compute_power(
@@ -171,17 +172,23 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
                 **pow_kwargs, **wave_kwargs
 
             )
-            
+
             # get mean and std for each channel
-            basepow_mu[i].append(pre_trial_power.mean(dim=['event', 'time']))
-            basepow_std[i].append(pre_trial_power.std(dim=['event', 'time']))
-    
+            sess_mu.append(pre_trial_power.mean(dim=['event', 'time']))
+            sess_std.append(pre_trial_power.std(dim=['event', 'time']))
+
+        # add session averages accross trials to mu and std lists
+        besepow_mu.append(xr.DataArray(sess_mu, coords=[sess_trials.values, pre_trial_power.channel],
+                               dims=['trial', 'channel']).mean(dim='trial'))
+        basepow_std.append(xr.DataArray(sess_std, coords=[sess_trials.values, pre_trial_power.channel],
+                               dims=['trial', 'channel']).mean(dim='trial'))
+
     # convert to xarrays
-    basepow = xr.DataArray([basepow_mu, basepow_std],
+    basepow = xr.DataArray([besepow_mu, basepow_std],
                            coords=[['mu', 'std'], sessions, pre_trial_power.channel],
                            dims=['zstat', 'session', 'channel'])
 
-    return basebasepowpow
+    return basepow
 
 
 def zscore_powers(powers, basepow):
@@ -189,11 +196,19 @@ def zscore_powers(powers, basepow):
     powers = powers.copy() # dont want to change anything in place
     
     # z score each session based on its own baseline
-    sessions = powers.event.values['session'].unique()
+    sessions = np.unique(powers.event.values['session'])
     for session in sessions:
-        sess_locs = powers.event.values['session']==sessions
+        sess_locs = powers.event.values['session']==session
         # zscore will work accross channels, for all events in this session
-        powers[sess_locs] -= basepow['mu', session]
-        powers[sess_locs] /= basepow['std', session]
-
+        powers[sess_locs] -= basepow[basepow.zstat=='mu', session].squeeze()
+        powers[sess_locs] /= basepow[basepow.zstat=='std', session].squeeze()
+        
     return powers
+
+
+def zscore_old(eeg_pow):
+    
+    z_pow = zscore(eeg_pow, axis=eeg_pow.get_axis_num('time'))
+    z_pow = TimeSeries(data=z_pow, coords=eeg_pow.coords,
+                       dims=eeg_pow.dims)  
+    return z_pow

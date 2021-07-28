@@ -16,11 +16,9 @@ def subject_id(subject, montage):
                 else f"{subject}_{int(montage)}")
 
 
-def get_base_and_move_starts(path):
-    """ Given path data of 1 event, determine the start of
-        the baseline and the start of the navigation, based
-        on the first timepoint and the first movement timepoint
-        in the path data, respectively.
+def get_nav_epochs(path):
+    """ Given path data of 1 event, determine the start
+        and end of the navigation epoch.
         
         Args:
             path (list): list of path datapoints each containing
@@ -34,10 +32,10 @@ def get_base_and_move_starts(path):
     ys = [p['y'] for p in path]
     dirs = [p['heading'] for p in path]
     ts = [p['mstime'] for p in path]
-    
-    base_start = ts[0]
 
+    started = False
     move_start = ts[-1]
+    move_end = ts[-1]
     for i, (x,y,d,t) in enumerate(zip(xs, ys, dirs, ts)):
         if ((i>0) and
             ((x!=xs[i-1])
@@ -45,10 +43,12 @@ def get_base_and_move_starts(path):
              or (d!=dirs[i-1])
                 )):
             move_start = t
+            started = True
+        elif started:
+            move_end = t
             break
     
-    
-    return base_start, move_start
+    return move_start, move_end
 
 
 def get_all_events(**subject_dict):
@@ -90,15 +90,15 @@ def get_all_events(**subject_dict):
                 if row['session'] == all_events.iloc[iloc-1]['session']:
                     bad_events.append(i)
         all_events = all_events[~all_events.index.isin(bad_events)]
-       
-    base_starts = []
+
     move_starts = []
+    move_ends = []
     for i, event in all_events.iterrows():
-        base_start, move_start = get_base_and_move_starts(event['pathInfo'])
-        base_starts.append(base_start)
+        move_start, move_end = get_nav_epochs(event['pathInfo'])
         move_starts.append(move_start)
-    all_events['base_start'] = base_starts
+        move_ends.append(move_end)
     all_events['move_start'] = move_starts
+    all_events['move_ends'] = move_ends
     
     return all_events
 
@@ -217,7 +217,7 @@ def load_eeg(events, which_contacts,
     # filter channels to only desired contacts
     contact_locs = [elec_scheme[elec_scheme['contact']==c].iloc[0].name
                     for c in which_contacts]
-    eeg = eeg[:,  which_contacts, :]
+    eeg = eeg[:,  contact_locs, :]
         
     # filter line noise
     if noise_freq is not None:
