@@ -37,7 +37,7 @@ def compute_hilbert(eeg):
 
 def compute_wavelet(eeg, freqs, wave_num=6,
                     output='power', log_power=True,
-                    mean_over_freqs=False,
+                    mean_over_freqs=False, **kwargs
                    ):
 
     wave_pow = MorletWaveletFilter(
@@ -80,7 +80,7 @@ def compute_power(eeg, freq_band, buf_ms,
         powers = compute_hilbert(filt_eeg)
         
     elif transform == 'wavelet':
-        num_freqs = int(freq_band[1]-freq_band[0]) * 5
+        num_freqs = int(pow(int(freq_band[1]-freq_band[0]) * 50, 0.5))
         
         freqs = np.geomspace(*freq_band, num_freqs)
         powers = compute_wavelet(
@@ -167,8 +167,8 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
                  **kwargs
             )
             pre_trial_power = compute_power(
-                pre_trial_eeg, freq_band, buf_ms=buf_ms,
-                **kwargs
+                eeg=pre_trial_eeg, freq_band=freq_band,
+                buf_ms=buf_ms, **kwargs
             )
 
             # get mean and std for each channel
@@ -189,6 +189,34 @@ def get_basepow(events, freq_band, which_contacts, buf_ms,
     return basepow
 
 
+def get_navpow(events, freq_band, which_contacts, buf_ms,
+               subject_dict, **kwargs):
+    
+    nav_pows = []
+    
+    for i, event in events.itterrows():
+        
+        # determine nav starts and stops for this event
+        rel_start_ms = event['nav_start'] - event['mstime']
+        rel_stop_ms = event['nav_end'] - event['mstime']
+
+        # load nav eeg and power
+        nav_eeg = Reader.load_eeg(
+            subject_dict, event.to_frame(),
+            which_contacts=which_contacts,
+            rel_start_ms=rel_start_ms, rel_stop_ms=rel_stop_ms,
+            buf_ms=buf_ms, do_average_ref=False,
+            **kwargs
+        )
+        nav_power = compute_power(
+            eeg=nav_eeg, freq_band=freq_band,
+            buf_ms=buf_ms, **kwargs
+        )
+        nav_pows.append(nav_power.mean())
+    
+    return np.nanmean(nav_pow), ss.sem(nav_pow, nan_policy='omit')
+
+
 def zscore_powers(powers, basepow):
     
     powers = powers.copy() # dont want to change anything in place
@@ -204,9 +232,4 @@ def zscore_powers(powers, basepow):
     return powers
 
 
-def zscore_old(eeg_pow):
-    
-    z_pow = zscore(eeg_pow, axis=eeg_pow.get_axis_num('time'))
-    z_pow = TimeSeries(data=z_pow, coords=eeg_pow.coords,
-                       dims=eeg_pow.dims)  
-    return z_pow
+

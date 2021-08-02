@@ -11,7 +11,7 @@ from ptsa.data.filters import ResampleFilter
 from ptsa.data.timeseries import TimeSeries
 
 
-def subject_id(subject, montage):
+def subject_id(subject, montage, **kwargs):
     return (subject if montage == 0
                 else f"{subject}_{int(montage)}")
 
@@ -110,13 +110,15 @@ def load_matlab_contacts(subject, montage, load_type='contacts'):
     subj_str = subject_id(subject, montage)
     if load_type=='contacts':
         load_type = 'monopol'
+        struct = 'talStruct'
     elif load_type=='pairs':
         load_type='bipol'
+        struct = 'bpTalStruct'
     else:
         raise ValueError(f"load type must be 'pairs' or 'contacts': {load} is invalid load_type.'")
         
     path = f'/data/eeg/{subj_str}/tal/{subj_str}_talLocs_database_{load_type}.mat'
-    contacts = pd.DataFrame(sio.loadmat(path, squeeze_me=True)['talStruct'])
+    contacts = pd.DataFrame(sio.loadmat(path, squeeze_me=True)[struct])
     
     if subject=='R1059J' and montage==1:
         # this contact is a duplicate of contact 114 
@@ -126,7 +128,7 @@ def load_matlab_contacts(subject, montage, load_type='contacts'):
     return contacts
 
 
-def load_contacts(load_type='contacts', **subject_dict):
+def load_contacts(subject_dict, load_type='contacts', **kwargs):
     
     reader = CMLReader(**subject_dict)
     contacts = reader.load(load_type)
@@ -157,7 +159,10 @@ def load_contacts(load_type='contacts', **subject_dict):
 
 
 def get_region_contacts(region, rcalc, contacts):
-    return contacts[contacts[rcalc]==region]['contact'].values
+    if 'contact' in contacts:
+        return contacts[contacts[rcalc]==region]['contact'].values
+    else:
+        return contacts[contacts[rcalc]==region]['contact_1'].values
 
 
 def make_events_first_dim(ts, event_dim_str='event'):
@@ -181,6 +186,7 @@ def load_eeg(subject_dict, events, which_contacts,
              rel_start_ms, rel_stop_ms, buf_ms,
              noise_freq=[58., 62.], resample_freq=None,
              pass_band=None, do_average_ref=False,
+             load_type='contacts',
              **kwargs,
             ):
     
@@ -188,11 +194,9 @@ def load_eeg(subject_dict, events, which_contacts,
         start = rel_start_ms - buf_ms
         stop = rel_stop_ms + buf_ms
     
-    for key in kwargs:
-        if key != 'load_type':
-            kwargs.pop(key)
     reader = CMLReader(**subject_dict)
-    elec_scheme = load_contacts(**subject_dict)
+    elec_scheme = load_contacts(subject_dict=subject_dict, load_type=load_type)
+    contact_field = 'contact' if load_type=='contacts' else 'contact_1'
     
     loaded = False
     while not loaded:
@@ -206,7 +210,7 @@ def load_eeg(subject_dict, events, which_contacts,
             bad_contact = int(str(ke).replace("'", ''))
             if bad_contact in which_contacts:
                 raise ke
-            elec_scheme = elec_scheme[elec_scheme['contact'] != bad_contact]
+            elec_scheme = elec_scheme[elec_scheme[contact_field] != bad_contact]
     
     # now auto cast to float32 to help with memory issues with high sample rate data
     eeg.data = eeg.data.astype('float32')
@@ -219,7 +223,7 @@ def load_eeg(subject_dict, events, which_contacts,
     eeg = make_events_first_dim(eeg)
     
     # filter channels to only desired contacts
-    contact_locs = [elec_scheme[elec_scheme['contact']==c].iloc[0].name
+    contact_locs = [elec_scheme[elec_scheme[contact_field]==c].iloc[0].name
                     for c in which_contacts]
     eeg = eeg[:,  contact_locs, :]
         
